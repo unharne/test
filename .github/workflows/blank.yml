@@ -19,20 +19,15 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Gradle
+    # Принудительно ставим Gradle 8.5, чтобы Forge не ругался на версию 9+
+    - name: Setup Gradle 8.5
       uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.5'
 
-    - name: Grant execute permission for gradlew (if exists)
-      run: |
-        if [ -f ./gradlew ]; then
-          chmod +x gradlew
-        else
-          gradle wrapper --gradle-version 8.1.1
-          chmod +x gradlew
-        fi
-
+    # Запускаем сборку напрямую через установленный Gradle
     - name: Build with Gradle
-      run: ./gradlew jar
+      run: gradle jar
 
     - name: Upload Mod Jar
       uses: actions/upload-artifact@v4
