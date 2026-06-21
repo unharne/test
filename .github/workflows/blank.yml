@@ -19,15 +19,14 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # Принудительно ставим Gradle 8.5, чтобы Forge не ругался на версию 9+
     - name: Setup Gradle 8.5
       uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '8.5'
 
-    # Запускаем сборку напрямую через установленный Gradle
+    # ВОТ ЗДЕСЬ ИЗМЕНЕНИЕ: используем build вместо jar, чтобы Forge зашифровал код под обычную игру
     - name: Build with Gradle
-      run: gradle jar
+      run: gradle build
 
     - name: Upload Mod Jar
       uses: actions/upload-artifact@v4
