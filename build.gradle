@@ -1,0 +1,65 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '6.0.+'
+}
+
+group = 'com.example'
+version = '1.0'
+
+base {
+    archivesName = 'waterdrop'
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+minecraft {
+    mappings channel: 'official', version: '1.20.1'
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                waterdrop {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+repositories {
+    maven { name = 'forge'; url = 'https://maven.minecraftforge.net/' }
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version: '1.20.1',
+            minecraft_version_range: '[1.20.1, 1.21)',
+            forge_version: '47.2.0',
+            forge_version_range: '[47,)',
+            loader_version_range: '[47,)',
+            mod_id: 'waterdrop',
+            mod_name: 'Water Drop Mod',
+            mod_license: 'MIT',
+            mod_version: '1.0',
+            mod_authors: 'AI',
+            mod_description: 'Auto water drop mod'
+    ]
+    inputs.properties replaceProperties
+
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
