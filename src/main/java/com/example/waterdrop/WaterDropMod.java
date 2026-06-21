@@ -14,15 +14,16 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 @Mod(WaterDropMod.MODID)
 public class WaterDropMod {
     public static final String MODID = "waterdrop";
     
     private static boolean isEnabled = true;
-    private static final Map<BlockPos, Level> blocksToRemove = new HashMap<>();
+    // Используем простой список координат вместо хранения тяжелых объектов мира, чтобы избежать утечек и крашей
+    private static final List<BlockPos> blocksToRemove = new ArrayList<>();
 
     public WaterDropMod() {
         MinecraftForge.EVENT_BUS.register(this);
@@ -30,30 +31,38 @@ public class WaterDropMod {
 
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase != TickEvent.Phase.START || event.player.level().isClientSide) return;
+        // Проверяем сторону строго через встроенный логический метод Forge
+        if (event.phase != TickEvent.Phase.START || event.side.isClient()) return;
 
         Player player = event.player;
-        Level level = player.level();
+        if (player == null) return;
 
+        // getCommandSenderWorld() — самый стабильный метод во всех сборках 1.20.1, обходящий баги маппингов
+        Level level = player.getCommandSenderWorld();
+        if (level == null) return;
+
+        // Безопасная очистка блоков воды с прошлых тиков
         if (!blocksToRemove.isEmpty()) {
-            blocksToRemove.forEach((pos, lvl) -> {
-                if (lvl.getBlockState(pos).is(Blocks.WATER)) {
-                    lvl.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            for (BlockPos pos : new ArrayList<>(blocksToRemove)) {
+                if (level.getBlockState(pos).is(Blocks.WATER)) {
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
                 }
-            });
+            }
             blocksToRemove.clear();
         }
 
         if (!isEnabled) return;
 
+        // Проверка падения: если игрок летит вниз с высоты более 2.5 блоков
         if (player.fallDistance > 2.5F && player.getDeltaMovement().y < -0.5) {
             Vec3 pos = player.position();
+            // Находим блок строго под хитбоксом ног персонажа
             BlockPos blockUnder = BlockPos.containing(pos.x, player.getBoundingBox().minY - 0.5, pos.z);
 
             if (level.getBlockState(blockUnder).isAir()) {
                 level.setBlock(blockUnder, Blocks.WATER.defaultBlockState(), 3);
-                blocksToRemove.put(blockUnder, level);
-                player.fallDistance = 0;
+                blocksToRemove.add(blockUnder);
+                player.fallDistance = 0; // Полностью обнуляем урон от падения
             }
         }
     }
