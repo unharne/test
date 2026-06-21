@@ -35,10 +35,10 @@ public class WaterDropMod {
     private static boolean isWdEnabled = true;
     private static boolean isAimEnabled = true;
 
-    private static final double MAX_WATER_DROP_DISTANCE = 7.0D;
+    private static final double MAX_WATER_DROP_DISTANCE = 4.25D;
     private static final double MIN_FALL_SPEED = -0.35D;
     private static final float MIN_FALL_DISTANCE = 2.4F;
-    private static final int WATER_DROP_COOLDOWN_TICKS = 4;
+    private static final int WATER_DROP_COOLDOWN_TICKS = 1;
 
     private int waterDropCooldown = 0;
 
@@ -100,10 +100,11 @@ public class WaterDropMod {
         if (isWdEnabled && mc.gameMode != null && waterDropCooldown == 0 && shouldTryWaterDrop(player)) {
             BlockHitResult placementHit = findBestWaterDropHit(mc, player);
             if (placementHit != null && selectWaterBucket(player)) {
+                // Это именно действие правой кнопки по блоку. Не вызываем player.swing() отдельно,
+                // чтобы не получить визуальный/пакетный "удар" как от левой кнопки.
                 mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, placementHit);
-                player.swing(InteractionHand.MAIN_HAND);
 
-                // Небольшая пауза защищает от двойного клика и повторной отправки пакета на один и тот же блок.
+                // Минимальная пауза: если сервер отверг пакет из-за дистанции/лага, следующий тик попробует снова.
                 waterDropCooldown = WATER_DROP_COOLDOWN_TICKS;
             }
         }
