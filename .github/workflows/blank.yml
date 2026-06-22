@@ -31,5 +31,5 @@ jobs:
     - name: Upload Mod Jar
       uses: actions/upload-artifact@v4
       with:
-        name: WaterDrop4-Jar
+        name: WaterDrop-Jar
         path: build/libs/*.jar
