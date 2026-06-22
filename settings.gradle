@@ -5,4 +5,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'waterdrop4'
+rootProject.name = 'waterdrop'
