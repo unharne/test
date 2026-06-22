@@ -3,9 +3,15 @@ package com.example.waterdrop;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -18,8 +24,12 @@ import net.minecraftforge.fml.loading.FMLEnvironment;
 public class WaterDropMod {
     public static final String MODID = "waterdrop";
     
+    // Переменные для хитбоксов
     private boolean enabled = false;
-    private float hitboxSize = 2.0f; // Размер хитбокса по умолчанию при включении
+    private float hitboxSize = 2.0f; 
+
+    // Переменная для быстрой стройки
+    private boolean buildEnabled = false;
 
     public WaterDropMod() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
@@ -33,23 +43,57 @@ public class WaterDropMod {
 
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.level == null || !enabled) return;
+        if (player == null || mc.level == null) return;
 
-        // Перебираем всех сущностей в зоне рендера клиента
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (entity == player) continue;
+        // --- 1. ЛОГИКА УВЕЛИЧЕННЫХ ХИТБОКСОВ ---
+        if (enabled) {
+            for (Entity entity : mc.level.entitiesForRendering()) {
+                if (entity == player) continue;
 
-            double w = hitboxSize / 2.0;
+                double w = hitboxSize / 2.0;
+                
+                entity.setBoundingBox(new AABB(
+                    entity.getX() - w,
+                    entity.getY(),
+                    entity.getZ() - w,
+                    entity.getX() + w,
+                    entity.getY() + hitboxSize,
+                    entity.getZ() + w
+                ));
+            }
+        }
+
+        // --- 2. ЛОГИКА БЫСТРОЙ СТРОЙКИ ПОД СОБОЙ ---
+        if (buildEnabled && mc.gameMode != null) {
+            // Получаем координаты блока ровно под ногами
+            BlockPos posBelow = player.blockPosition().below();
             
-            // Устанавливаем расширенный хитбокс вокруг позиции сущности
-            entity.setBoundingBox(new AABB(
-                entity.getX() - w,
-                entity.getY(), // Низ хитбокса остается на уровне ног сущности
-                entity.getZ() - w,
-                entity.getX() + w,
-                entity.getY() + hitboxSize, // Высота подгоняется под установленный размер
-                entity.getZ() + w
-            ));
+            // Если под ногами пусто (игрок сходит с края)
+            if (mc.level.getBlockState(posBelow).isAir()) {
+                // Ищем соседний блок, к которому можно "прикрепить" новый
+                for (Direction dir : Direction.values()) {
+                    BlockPos neighbor = posBelow.relative(dir);
+                    
+                    if (!mc.level.getBlockState(neighbor).isAir()) {
+                        // Создаем результат "наведения" на грань соседнего блока
+                        BlockHitResult hitResult = new BlockHitResult(
+                            new Vec3(neighbor.getX() + 0.5, neighbor.getY() + 0.5, neighbor.getZ() + 0.5),
+                            dir.getOpposite(),
+                            neighbor,
+                            false
+                        );
+                        
+                        // Эмулируем клик ПКМ для установки блока из главной руки
+                        InteractionResult result = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hitResult);
+                        
+                        if (result.consumesAction()) {
+                            // Взмах рукой для визуализации
+                            player.swing(InteractionHand.MAIN_HAND);
+                            break; // Успешно поставили блок, выходим из цикла
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -59,7 +103,6 @@ public class WaterDropMod {
         
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity != mc.player) {
-                // Сбрасывает хитбоксы до стандартных игровых значений
                 entity.refreshDimensions();
             }
         }
@@ -77,6 +120,14 @@ public class WaterDropMod {
                         
                         if (player == null) return 1;
 
+                        // Команда для быстрой стройки
+                        if (arg.equalsIgnoreCase("build")) {
+                            buildEnabled = !buildEnabled;
+                            player.displayClientMessage(Component.literal(buildEnabled ? "§aБыстрая стройка: ВКЛ" : "§cБыстрая стройка: ВЫКЛ"), false);
+                            return 1;
+                        }
+
+                        // Команды для хитбоксов
                         if (arg.equals("1")) {
                             enabled = true;
                             player.displayClientMessage(Component.literal("§aУвеличение хитбоксов: ВКЛ (Текущий размер: " + hitboxSize + ")"), false);
@@ -86,13 +137,12 @@ public class WaterDropMod {
                             player.displayClientMessage(Component.literal("§cУвеличение хитбоксов: ВЫКЛ"), false);
                         } else {
                             try {
-                                // Попытка спарсить число (например 1.5, 3.2 или обычное целое 3)
                                 float size = Float.parseFloat(arg);
                                 hitboxSize = size;
-                                enabled = true; // Автоматическая активация при изменении размера
+                                enabled = true;
                                 player.displayClientMessage(Component.literal("§eРазмер хитбокса установлен на: " + size + " и активирован."), false);
                             } catch (NumberFormatException e) {
-                                player.displayClientMessage(Component.literal("§4Ошибка: используйте 1 (вкл), 0 (выкл) или дробное/целое число для размера."), false);
+                                player.displayClientMessage(Component.literal("§4Ошибка: используйте 1, 0, число для размера хитбокса или 'build' для стройки."), false);
                             }
                         }
                         return 1;
