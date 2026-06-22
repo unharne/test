@@ -9,6 +9,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -28,8 +29,9 @@ public class WaterDropMod {
     private boolean enabled = false;
     private float hitboxSize = 2.0f; 
 
-    // Переменная для быстрой стройки
+    // Переменные для быстрой стройки
     private boolean buildEnabled = false;
+    private int buildCooldown = 0; // Задержка между установкой блоков
 
     public WaterDropMod() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
@@ -44,6 +46,11 @@ public class WaterDropMod {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null) return;
+
+        // Уменьшаем кулдаун стройки каждый тик
+        if (buildCooldown > 0) {
+            buildCooldown--;
+        }
 
         // --- 1. ЛОГИКА УВЕЛИЧЕННЫХ ХИТБОКСОВ ---
         if (enabled) {
@@ -63,33 +70,43 @@ public class WaterDropMod {
             }
         }
 
-        // --- 2. ЛОГИКА БЫСТРОЙ СТРОЙКИ ПОД СОБОЙ ---
-        if (buildEnabled && mc.gameMode != null) {
-            // Получаем координаты блока ровно под ногами
-            BlockPos posBelow = player.blockPosition().below();
-            
-            // Если под ногами пусто (игрок сходит с края)
-            if (mc.level.getBlockState(posBelow).isAir()) {
-                // Ищем соседний блок, к которому можно "прикрепить" новый
-                for (Direction dir : Direction.values()) {
-                    BlockPos neighbor = posBelow.relative(dir);
+        // --- 2. ЛОГИКА ЛЕГИТИМНОЙ СТРОЙКИ ---
+        if (buildEnabled && mc.gameMode != null && buildCooldown == 0) {
+            // Проверяем, держит ли игрок именно блок в главной руке
+            if (player.getMainHandItem().getItem() instanceof BlockItem) {
+                
+                BlockPos posBelow = player.blockPosition().below();
+                
+                // Если под ногами воздух
+                if (mc.level.getBlockState(posBelow).isAir()) {
                     
-                    if (!mc.level.getBlockState(neighbor).isAir()) {
-                        // Создаем результат "наведения" на грань соседнего блока
-                        BlockHitResult hitResult = new BlockHitResult(
-                            new Vec3(neighbor.getX() + 0.5, neighbor.getY() + 0.5, neighbor.getZ() + 0.5),
-                            dir.getOpposite(),
-                            neighbor,
-                            false
-                        );
+                    // АНТИ-ТЕЛЕПОРТ: Проверяем, не пересекается ли хитбокс игрока с блоком, который мы хотим поставить.
+                    // Если игрок уже провалился в этот блок, сервер забракует установку.
+                    AABB blockBox = new AABB(posBelow);
+                    if (!player.getBoundingBox().intersects(blockBox)) {
                         
-                        // Эмулируем клик ПКМ для установки блока из главной руки
-                        InteractionResult result = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hitResult);
-                        
-                        if (result.consumesAction()) {
-                            // Взмах рукой для визуализации
-                            player.swing(InteractionHand.MAIN_HAND);
-                            break; // Успешно поставили блок, выходим из цикла
+                        for (Direction dir : Direction.values()) {
+                            // Игнорируем направление "сверху", чтобы не ставить блоки в странных позициях
+                            if (dir == Direction.UP) continue; 
+                            
+                            BlockPos neighbor = posBelow.relative(dir);
+                            
+                            if (!mc.level.getBlockState(neighbor).isAir()) {
+                                BlockHitResult hitResult = new BlockHitResult(
+                                    new Vec3(neighbor.getX() + 0.5, neighbor.getY() + 0.5, neighbor.getZ() + 0.5),
+                                    dir.getOpposite(),
+                                    neighbor,
+                                    false
+                                );
+                                
+                                InteractionResult result = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hitResult);
+                                
+                                if (result.consumesAction()) {
+                                    player.swing(InteractionHand.MAIN_HAND);
+                                    buildCooldown = 4; // Устанавливаем ванильную задержку (4 тика)
+                                    break; 
+                                }
+                            }
                         }
                     }
                 }
@@ -120,14 +137,12 @@ public class WaterDropMod {
                         
                         if (player == null) return 1;
 
-                        // Команда для быстрой стройки
                         if (arg.equalsIgnoreCase("build")) {
                             buildEnabled = !buildEnabled;
-                            player.displayClientMessage(Component.literal(buildEnabled ? "§aБыстрая стройка: ВКЛ" : "§cБыстрая стройка: ВЫКЛ"), false);
+                            player.displayClientMessage(Component.literal(buildEnabled ? "§aБыстрая стройка: ВКЛ (Легитный режим)" : "§cБыстрая стройка: ВЫКЛ"), false);
                             return 1;
                         }
 
-                        // Команды для хитбоксов
                         if (arg.equals("1")) {
                             enabled = true;
                             player.displayClientMessage(Component.literal("§aУвеличение хитбоксов: ВКЛ (Текущий размер: " + hitboxSize + ")"), false);
@@ -142,7 +157,7 @@ public class WaterDropMod {
                                 enabled = true;
                                 player.displayClientMessage(Component.literal("§eРазмер хитбокса установлен на: " + size + " и активирован."), false);
                             } catch (NumberFormatException e) {
-                                player.displayClientMessage(Component.literal("§4Ошибка: используйте 1, 0, число для размера хитбокса или 'build' для стройки."), false);
+                                player.displayClientMessage(Component.literal("§4Ошибка: используйте 1, 0, число для размера или 'build' для стройки."), false);
                             }
                         }
                         return 1;
