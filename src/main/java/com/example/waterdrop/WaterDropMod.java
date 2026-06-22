@@ -1,16 +1,15 @@
-package com.example.legitscaffold;
+package com.example.waterdrop;
 
-import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -19,21 +18,13 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.loading.FMLEnvironment;
 
-@Mod(LegitScaffoldMod.MODID)
-public class LegitScaffoldMod {
-    public static final String MODID = "legitscaffold";
-    
-    // Переменные для функционала Хитбоксов (/helpme)
-    private boolean hitboxEnabled = false;
-    private float hitboxSize = 2.0f;
+@Mod(ScaffoldMod.MODID)
+public class ScaffoldMod {
+    public static final String MODID = "scaffold";
+    private static boolean isEnabled = true;
+    private int placeCooldown = 0;
 
-    // Переменные для функционала Скэффолда (/scaffold)
-    private boolean scaffoldEnabled = false;
-    private int placeDelayTicks = 2; 
-    private int currentDelay = 0;
-    private boolean isSneakingByMod = false; 
-
-    public LegitScaffoldMod() {
+    public ScaffoldMod() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
             MinecraftForge.EVENT_BUS.register(this);
         }
@@ -45,153 +36,66 @@ public class LegitScaffoldMod {
 
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.level == null) return;
+        if (player == null || mc.level == null || mc.gameMode == null) return;
 
-        // ===============================
-        // 1. ЛОГИКА УВЕЛИЧЕНИЯ ХИТБОКСОВ
-        // ===============================
-        if (hitboxEnabled) {
-            for (Entity entity : mc.level.entitiesForRendering()) {
-                if (entity == player) continue;
-
-                double w = hitboxSize / 2.0;
-                entity.setBoundingBox(new AABB(
-                    entity.getX() - w,
-                    entity.getY(), 
-                    entity.getZ() - w,
-                    entity.getX() + w,
-                    entity.getY() + hitboxSize, 
-                    entity.getZ() + w
-                ));
-            }
+        if (placeCooldown > 0) {
+            placeCooldown--;
+            return;
         }
 
-        // ===============================
-        // 2. ЛОГИКА ЛЕГИТНОГО СКЭФФОЛДА
-        // ===============================
-        if (currentDelay > 0) {
-            currentDelay--;
-        }
+        if (!isEnabled) return;
 
-        if (!scaffoldEnabled) {
-            if (isSneakingByMod) {
-                mc.options.keyShift.setDown(false);
-                isSneakingByMod = false;
-            }
-        } else {
-            boolean holdingBlock = player.getMainHandItem().getItem() instanceof BlockItem || 
-                                   player.getOffhandItem().getItem() instanceof BlockItem;
+        // Строим только если в основной руке удерживается блок
+        if (!(player.getMainHandItem().getItem() instanceof BlockItem)) return;
 
-            if (holdingBlock && player.onGround()) {
-                BlockPos underPos = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
-                boolean isAirBelow = mc.level.getBlockState(underPos).isAir();
+        // Позиция блока строго под ногами игрока
+        BlockPos blockBelow = BlockPos.containing(player.getX(), player.getY() - 1.0D, player.getZ());
 
-                if (isAirBelow) {
-                    if (!mc.options.keyShift.isDown() && !isSneakingByMod) {
-                        mc.options.keyShift.setDown(true);
-                        isSneakingByMod = true;
-                    }
+        // Если под нами воздух — ищем куда поставить блок
+        if (mc.level.getBlockState(blockBelow).isAir()) {
+            BlockPos targetPos = null;
+            Direction targetFace = null;
 
-                    if (currentDelay <= 0 && mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.BLOCK) {
-                        BlockHitResult blockHit = (BlockHitResult) mc.hitResult;
-                        mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, blockHit);
-                        player.swing(InteractionHand.MAIN_HAND);
-                        currentDelay = placeDelayTicks;
-                    }
-                } else {
-                    if (isSneakingByMod) {
-                        mc.options.keyShift.setDown(false);
-                        isSneakingByMod = false;
-                    }
-                }
-            } else {
-                if (isSneakingByMod) {
-                    mc.options.keyShift.setDown(false);
-                    isSneakingByMod = false;
+            // Сканируем смежные стороны, чтобы найти существующий блок для клика
+            for (Direction dir : Direction.values()) {
+                BlockPos neighbor = blockBelow.relative(dir);
+                if (!mc.level.getBlockState(neighbor).isAir() && mc.level.getFluidState(neighbor).isEmpty()) {
+                    targetPos = neighbor;
+                    targetFace = dir.getOpposite(); // Кликаем по встречной грани блока-соседа
+                    break;
                 }
             }
-        }
-    }
 
-    private void resetHitboxes() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null) return;
-        
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (entity != mc.player) {
-                entity.refreshDimensions();
+            // Если нашли за что зацепиться — ставим блок
+            if (targetPos != null) {
+                Vec3 hitVec = Vec3.atCenterOf(targetPos).add(Vec3.atLowerCornerOf(targetFace.getNormal()).scale(0.5D));
+                BlockHitResult hitResult = new BlockHitResult(hitVec, targetFace, targetPos, false);
+
+                // Легитное взаимодействие с миром через GameMode
+                mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hitResult);
+                player.swing(InteractionHand.MAIN_HAND);
+                
+                // Задержка в 1 тик для имитации человеческого клика и стабильности
+                placeCooldown = 1; 
             }
         }
     }
 
     @SubscribeEvent
     public void onClientCommands(RegisterClientCommandsEvent event) {
-        // Регистрация команды /helpme
         event.getDispatcher().register(
-            net.minecraft.commands.Commands.literal("helpme")
-                .then(net.minecraft.commands.Commands.argument("arg", StringArgumentType.string())
-                    .executes(ctx -> {
-                        String arg = StringArgumentType.getString(ctx, "arg");
-                        Minecraft mc = Minecraft.getInstance();
-                        LocalPlayer player = mc.player;
-                        
-                        if (player == null) return 1;
-
-                        if (arg.equals("1")) {
-                            hitboxEnabled = true;
-                            player.displayClientMessage(Component.literal("§aУвеличение хитбоксов: ВКЛ (Текущий размер: " + hitboxSize + ")"), false);
-                        } else if (arg.equals("0")) {
-                            hitboxEnabled = false;
-                            resetHitboxes();
-                            player.displayClientMessage(Component.literal("§cУвеличение хитбоксов: ВЫКЛ"), false);
-                        } else {
-                            try {
-                                float size = Float.parseFloat(arg);
-                                hitboxSize = size;
-                                hitboxEnabled = true; 
-                                player.displayClientMessage(Component.literal("§eРазмер хитбокса установлен на: " + size + " и активирован."), false);
-                            } catch (NumberFormatException e) {
-                                player.displayClientMessage(Component.literal("§4Ошибка: используйте 1 (вкл), 0 (выкл) или число для размера."), false);
+            net.minecraft.commands.Commands.literal("hack")
+                .then(net.minecraft.commands.Commands.literal("scaffold")
+                    .then(net.minecraft.commands.Commands.argument("state", IntegerArgumentType.integer(0, 1))
+                        .executes(ctx -> {
+                            isEnabled = IntegerArgumentType.getInteger(ctx, "state") == 1;
+                            LocalPlayer p = Minecraft.getInstance().player;
+                            if (p != null) {
+                                p.displayClientMessage(Component.literal(isEnabled ? "§aScaffold ВКЛ" : "§cScaffold ВЫКЛ"), false);
                             }
-                        }
-                        return 1;
-                    })
-                )
-        );
-
-        // Регистрация команды /scaffold
-        event.getDispatcher().register(
-            net.minecraft.commands.Commands.literal("scaffold")
-                .then(net.minecraft.commands.Commands.argument("arg", StringArgumentType.string())
-                    .executes(ctx -> {
-                        String arg = StringArgumentType.getString(ctx, "arg");
-                        Minecraft mc = Minecraft.getInstance();
-                        LocalPlayer player = mc.player;
-                        
-                        if (player == null) return 1;
-
-                        if (arg.equals("1")) {
-                            scaffoldEnabled = true;
-                            player.displayClientMessage(Component.literal("§aLegit Scaffold: ВКЛ (Задержка: " + placeDelayTicks + ")"), false);
-                        } else if (arg.equals("0")) {
-                            scaffoldEnabled = false;
-                            if (isSneakingByMod) {
-                                mc.options.keyShift.setDown(false);
-                                isSneakingByMod = false;
-                            }
-                            player.displayClientMessage(Component.literal("§cLegit Scaffold: ВЫКЛ"), false);
-                        } else {
-                            try {
-                                int delay = Integer.parseInt(arg);
-                                placeDelayTicks = Math.max(0, delay);
-                                scaffoldEnabled = true;
-                                player.displayClientMessage(Component.literal("§eЗадержка клика Scaffold установлена на: " + placeDelayTicks + " тиков."), false);
-                            } catch (NumberFormatException e) {
-                                player.displayClientMessage(Component.literal("§4Ошибка: используйте 1 (вкл), 0 (выкл) или целое число для задержки."), false);
-                            }
-                        }
-                        return 1;
-                    })
+                            return 1;
+                        })
+                    )
                 )
         );
     }
