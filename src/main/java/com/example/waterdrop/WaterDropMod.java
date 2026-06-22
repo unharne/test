@@ -1,149 +1,100 @@
-package com.example.waterdrop;
+package com.yourname.hitboxmod; // Замените на свой package, если нужно
 
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
+import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.AABB;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.loading.FMLEnvironment;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
 
-@Mod(WaterDropMod.MODID)
-public class WaterDropMod {
-    public static final String MODID = "waterdrop";
-    private static boolean isWdEnabled = true;
+@Mod("hitboxmod")
+@Mod.EventBusSubscriber(modid = "hitboxmod", bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
+public class HitboxMod {
 
-    private static final double MAX_WATER_DROP_DISTANCE = 4.5D;
-    private static final double MIN_FALL_SPEED = -0.35D;
-    private static final float MIN_FALL_DISTANCE = 2.4F;
-    private static final int WATER_DROP_COOLDOWN_TICKS = 2;
+    private static boolean enabled = false;
+    private static float hitboxSize = 2.0f; // Начальный размер хитбокса по умолчанию
 
-    private int waterDropCooldown = 0;
+    @SubscribeEvent
+    public static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        // Регистрация клиентской команды /helpme <аргумент>
+        event.getDispatcher().register(Commands.literal("helpme")
+            .then(Commands.argument("arg", StringArgumentType.string())
+                .executes(context -> {
+                    String arg = StringArgumentType.getString(context, "arg");
+                    Minecraft mc = Minecraft.getInstance();
 
-    public WaterDropMod() {
-        if (FMLEnvironment.dist == Dist.CLIENT) {
-            MinecraftForge.EVENT_BUS.register(this);
-        }
+                    if (arg.equals("1")) {
+                        enabled = true;
+                        sendMsg(mc, "§aУвеличение хитбоксов: ВКЛ (Текущий размер: " + hitboxSize + ")");
+                    } else if (arg.equals("0")) {
+                        enabled = false;
+                        resetHitboxes(mc);
+                        sendMsg(mc, "§cУвеличение хитбоксов: ВЫКЛ");
+                    } else {
+                        try {
+                            // Если введено число (например, 1.5, 3.0), меняем размер хитбокса
+                            float size = Float.parseFloat(arg);
+                            hitboxSize = size;
+                            enabled = true; // Автоматически включаем при смене размера
+                            sendMsg(mc, "§eРазмер хитбокса установлен на: " + size + " и активирован.");
+                        } catch (NumberFormatException e) {
+                            sendMsg(mc, "§4Ошибка: используйте 1 (вкл), 0 (выкл) или числовое значение (например, 2.5) для размера.");
+                        }
+                    }
+                    return 1;
+                })
+            )
+        );
     }
 
     @SubscribeEvent
-    public void onClientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
+    public static void onClientTick(TickEvent.ClientTickEvent event) {
+        // Выполняем только один раз за тик (в конце) и только если мод включен
+        if (event.phase != TickEvent.Phase.END || !enabled) return;
 
         Minecraft mc = Minecraft.getInstance();
-        LocalPlayer player = mc.player;
-        if (player == null || mc.level == null || mc.gameMode == null) return;
+        if (mc.level == null || mc.player == null) return;
 
-        if (waterDropCooldown > 0) {
-            waterDropCooldown--;
-            return;
-        }
+        // Перебираем всех отрендеренных сущностей в мире клиента
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            // Игнорируем самого себя
+            if (entity == mc.player) continue;
 
-        if (!isWdEnabled || !shouldTryWaterDrop(player)) return;
-
-        BlockHitResult hit = findBestWaterDropHit(mc, player);
-        if (hit == null) return;
-
-        if (selectWaterBucket(player)) {
-            // Более надежное размещение
-            mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
-            player.swing(InteractionHand.MAIN_HAND);           // Добавлено
-            waterDropCooldown = WATER_DROP_COOLDOWN_TICKS;
+            // Центрируем расширенный хитбокс относительно позиции сущности
+            double w = hitboxSize / 2.0;
+            
+            // Переопределяем bounding box, по которому регистрируются клики
+            entity.setBoundingBox(new AABB(
+                entity.getX() - w,
+                entity.getY(), // Низ хитбокса остается на уровне ног
+                entity.getZ() - w,
+                entity.getX() + w,
+                entity.getY() + hitboxSize, // Высота подгоняется под размер
+                entity.getZ() + w
+            ));
         }
     }
 
-    private boolean shouldTryWaterDrop(LocalPlayer player) {
-        return !player.isCreative() && !player.isSpectator() &&
-               !player.onGround() && !player.isInWater() && !player.isInLava() &&
-               player.fallDistance >= MIN_FALL_DISTANCE &&
-               player.getDeltaMovement().y <= MIN_FALL_DISTANCE;
-    }
-
-    private BlockHitResult findBestWaterDropHit(Minecraft mc, LocalPlayer player) {
-        Vec3 feet = player.position();
-        Vec3 vel = player.getDeltaMovement();
-
-        for (int t = 0; t <= 7; t++) {
-            Vec3 pos = feet.add(vel.x * t, vel.y * t - 0.04D * t * t, vel.z * t);
-            BlockHitResult hit = findSolidBlockBelow(mc, player, pos);
-            if (hit != null) return hit;
-        }
-        return findSolidBlockBelow(mc, player, feet);
-    }
-
-    private BlockHitResult findSolidBlockBelow(Minecraft mc, LocalPlayer player, Vec3 feet) {
-        Vec3 end = feet.add(0, -MAX_WATER_DROP_DISTANCE, 0);
-        BlockHitResult ray = mc.level.clip(new ClipContext(feet, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
-
-        if (ray.getType() == HitResult.Type.BLOCK && canPlaceWaterOn(mc, ray.getBlockPos(), ray.getLocation())) {
-            return new BlockHitResult(ray.getLocation(), Direction.UP, ray.getBlockPos(), false);
-        }
-
-        // offsets
-        double[][] offsets = {{0.3,0}, {-0.3,0}, {0,0.3}, {0,-0.3}, {0.25,0.25}, {0.25,-0.25}, {-0.25,0.25}, {-0.25,-0.25}};
-        for (double[] off : offsets) {
-            Vec3 p = feet.add(off[0], 0, off[1]);
-            ray = mc.level.clip(new ClipContext(p, p.add(0, -MAX_WATER_DROP_DISTANCE, 0), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
-            if (ray.getType() == HitResult.Type.BLOCK && canPlaceWaterOn(mc, ray.getBlockPos(), ray.getLocation())) {
-                return new BlockHitResult(ray.getLocation(), Direction.UP, ray.getBlockPos(), false);
+    // Возвращаем хитбоксы к ванильным значениям при выключении чита
+    private static void resetHitboxes(Minecraft mc) {
+        if (mc.level == null) return;
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity != mc.player) {
+                // Обновляет AABB до стандартного в соответствии с EntityDimensions
+                entity.refreshDimensions();
             }
         }
-        return null;
     }
 
-    private boolean canPlaceWaterOn(Minecraft mc, BlockPos pos, Vec3 hitLoc) {
-        BlockPos waterPos = pos.above();
-        VoxelShape shape = mc.level.getBlockState(pos).getCollisionShape(mc.level, pos);
-        return !shape.isEmpty() &&
-               mc.level.getFluidState(waterPos).isEmpty() &&
-               mc.level.getBlockState(waterPos).canBeReplaced() &&
-               !mc.level.getBlockState(waterPos).is(Blocks.POWDER_SNOW) &&
-               hitLoc.y <= waterPos.getY() + 0.1D;
-    }
-
-    private boolean selectWaterBucket(LocalPlayer player) {
-        if (player.getMainHandItem().is(Items.WATER_BUCKET)) return true;
-
-        for (int i = 0; i < 9; i++) {
-            if (player.getInventory().getItem(i).is(Items.WATER_BUCKET)) {
-                player.getInventory().selected = i;
-                player.connection.send(new ServerboundSetCarriedItemPacket(i));
-                return true;
-            }
+    // Отправка сообщений только в чат клиента (не уходит на сервер)
+    private static void sendMsg(Minecraft mc, String text) {
+        if (mc.player != null) {
+            mc.player.displayClientMessage(Component.literal(text), false);
         }
-        return false;
-    }
-
-    @SubscribeEvent
-    public void onClientCommands(RegisterClientCommandsEvent event) {
-        event.getDispatcher().register(
-            net.minecraft.commands.Commands.literal("hack")
-                .then(net.minecraft.commands.Commands.literal("wd")
-                    .then(net.minecraft.commands.Commands.argument("state", IntegerArgumentType.integer(0, 1))
-                        .executes(ctx -> {
-                            isWdEnabled = IntegerArgumentType.getInteger(ctx, "state") == 1;
-                            LocalPlayer p = Minecraft.getInstance().player;
-                            if (p != null) p.displayClientMessage(Component.literal(isWdEnabled ? "§aWaterDrop ВКЛ" : "§cWaterDrop ВЫКЛ"), false);
-                            return 1;
-                        })
-                    )
-                )
-        );
     }
 }
